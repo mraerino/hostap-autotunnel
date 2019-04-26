@@ -1,0 +1,15 @@
+version: "3.7"
+
+services:
+  build:
+    build:
+      context: tooling
+      dockerfile: build.Dockerfile
+    command: cargo build --target mips-unknown-linux-musl
+    working_dir: /src
+    volumes:
+      - .:/src
+      - cargo_cache:/usr/local/cargo/registry
+
+volumes:
+  cargo_cache:

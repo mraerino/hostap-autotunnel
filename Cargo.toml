@@ -1,0 +1,11 @@
+[package]
+name = "unifi-wifi-tunnels"
+version = "0.1.0"
+authors = ["Marcus Weiner <marcus.weiner@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+crossbeam-channel = "^0.3.8"
+ctrlc = "^3.1.2"
+nix = ""
+log = ""
