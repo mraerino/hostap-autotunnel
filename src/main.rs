@@ -1,7 +1,5 @@
 use crossbeam_channel::{bounded, select, tick, Receiver};
-use std::fs;
-use std::io;
-use std::path::PathBuf;
+use eui48::MacAddress;
 use std::time::Duration;
 
 mod wpactrl;
@@ -59,9 +57,9 @@ fn log_events() -> Result<()> {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Event {
-    StationConnected { mac: String },
-    StationDisconnected { mac: String },
-    Other,
+    StationConnected { mac: MacAddress },
+    StationDisconnected { mac: MacAddress },
+    Other { ident: String, args: Vec<String> },
 }
 
 impl Event {
@@ -84,12 +82,17 @@ impl Event {
             return Err("empty identifier".into());
         }
 
-        let mut args = event_parts.map(|s| s.to_owned());
-
-        Ok(match (event_ident.as_str(), args.next()) {
-            ("AP-STA-CONNECTED", Some(mac)) => Event::StationConnected { mac },
-            ("AP-STA-DISCONNECTED", Some(mac)) => Event::StationDisconnected { mac },
-            _ => Event::Other,
+        Ok(match (event_ident.as_str(), event_parts.next()) {
+            ("AP-STA-CONNECTED", Some(mac)) => Event::StationConnected {
+                mac: MacAddress::parse_str(mac)?,
+            },
+            ("AP-STA-DISCONNECTED", Some(mac)) => Event::StationDisconnected {
+                mac: MacAddress::parse_str(mac)?,
+            },
+            (ident, _) => Event::Other {
+                ident: ident.to_owned(),
+                args: event_parts.map(|s| s.to_owned()).collect(),
+            },
         })
     }
 }
