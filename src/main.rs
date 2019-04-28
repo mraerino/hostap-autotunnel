@@ -3,7 +3,7 @@ use eui48::MacAddress;
 use std::time::Duration;
 
 mod wpactrl;
-use wpactrl::WpaCtrl;
+use wpactrl::{WpaCtrl, WpaCtrlAttached};
 
 type IntError = Box<dyn std::error::Error>;
 type Result<T> = std::result::Result<T, IntError>;
@@ -11,7 +11,14 @@ type Result<T> = std::result::Result<T, IntError>;
 const SOCK_PATH: &str = "/var/run/hostapd/wlan0";
 
 fn main() {
-    log_events().unwrap();
+    let mut log = HostAPMonitor::connect(SOCK_PATH).unwrap();
+    println!("Attached");
+
+    println!("pinging...");
+    log.ping().unwrap();
+    println!("ping success");
+
+    log.log_events().unwrap();
 }
 
 fn ctrl_channel() -> Result<Receiver<()>> {
@@ -23,36 +30,61 @@ fn ctrl_channel() -> Result<Receiver<()>> {
     Ok(receiver)
 }
 
-fn log_events() -> Result<()> {
-    println!("Using path: {:?}", SOCK_PATH);
-    let wpa = WpaCtrl::new().ctrl_path(SOCK_PATH).open()?;
-    let mut receiver = wpa.attach()?;
+pub type HostAPMonitor = WpaCtrlAttached;
 
-    println!("Attached");
+impl HostAPMonitor {
+    fn connect(path: &str) -> Result<Self> {
+        let wpa = WpaCtrl::new().ctrl_path(path).open()?;
+        let conn = wpa.attach()?;
+        Ok(conn)
+    }
 
-    let ctrl_c_events = ctrl_channel()?;
-    let ticks = tick(Duration::from_secs(1));
-
-    loop {
-        select! {
-            recv(ticks) -> _ => {
-                match receiver.recv().unwrap() {
-                    Some(s) => {
-                        let evt = Event::from_string(&s);
-                        println!("EVENT: {:?}", evt)
-                    }
-                    None => std::thread::sleep(std::time::Duration::from_millis(10)),
-                }
-            }
-            recv(ctrl_c_events) -> _ => {
-                println!("Exiting. Bye 👋");
-                break
-            }
+    fn ping(&mut self) -> Result<()> {
+        let resp = self.request("PING")?;
+        match resp.as_str() {
+            "PONG\n" => Ok(()),
+            _ => Err("invalid reply".into()),
         }
     }
-    receiver.detach().unwrap();
 
-    Ok(())
+    fn log_events(&mut self) -> Result<()> {
+        let ctrl_c_events = ctrl_channel()?;
+        let ticks = tick(Duration::from_secs(1));
+
+        loop {
+            select! {
+                recv(ticks) -> _ => {
+                    match self.recv().unwrap() {
+                        Some(s) => {
+                            let evt = Event::from_string(&s)?;
+                            match evt {
+                                Event::StationConnected{ mac } => {
+                                    println!("Got new station: {}", mac);
+                                    let info = self.station_info(mac)?;
+                                    println!("Info: {}", info);
+                                }
+                                _ => {}
+                            }
+                        }
+                        None => std::thread::sleep(std::time::Duration::from_millis(10)),
+                    }
+                }
+                recv(ctrl_c_events) -> _ => {
+                    println!("Exiting. Bye 👋");
+                    break
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn station_info(&mut self, mac: MacAddress) -> Result<String> {
+        let req = format!("STA {}", mac.to_string(eui48::MacAddressFormat::HexString));
+        println!("CMD: {}", req);
+        let resp = self.request(req.as_str())?;
+        Ok(resp)
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -71,7 +103,7 @@ impl Event {
             .unwrap_or("")
             .chars()
             .skip(if event.starts_with("<") {
-                event.find(">").map(|p| p+1).unwrap_or(0)
+                event.find(">").map(|p| p + 1).unwrap_or(0)
             } else {
                 0
             })
